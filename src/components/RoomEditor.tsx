@@ -204,60 +204,59 @@ export function RoomEditor({ roomId }: { roomId: string }) {
     const { tables, edges } = useERDStore.getState()
     if (tables.length === 0) return
 
-    const tableSet = new Set(tables.map((t) => t.id))
-    const outgoing = new Map<string, string[]>(tables.map((t) => [t.id, []]))
-    const inDeg = new Map<string, number>(tables.map((t) => [t.id, 0]))
-
-    for (const e of edges) {
-      if (tableSet.has(e.source) && tableSet.has(e.target) && e.source !== e.target) {
-        outgoing.get(e.source)!.push(e.target)
-        inDeg.set(e.target, (inDeg.get(e.target) ?? 0) + 1)
-      }
-    }
-
-    // Kahn's layering: source (FK holder) → target (referenced) means source is left of target
-    const layerOf = new Map<string, number>(tables.map((t) => [t.id, 0]))
-    const queue = tables.filter((t) => inDeg.get(t.id) === 0).map((t) => t.id)
-    while (queue.length > 0) {
-      const id = queue.shift()!
-      const cur = layerOf.get(id) ?? 0
-      for (const tgt of outgoing.get(id) ?? []) {
-        if (cur + 1 > (layerOf.get(tgt) ?? 0)) layerOf.set(tgt, cur + 1)
-        const d = (inDeg.get(tgt) ?? 1) - 1
-        inDeg.set(tgt, d)
-        if (d === 0) queue.push(tgt)
-      }
-    }
-    // Tables still with inDeg > 0 are in cycles — push past max layer
-    const maxLayer = Math.max(0, ...layerOf.values())
-    for (const [id, d] of inDeg) {
-      if (d > 0) layerOf.set(id, maxLayer + 1)
-    }
-
-    // Group and sort each layer by current Y (preserve vertical order)
-    const groups = new Map<number, ERDTable[]>()
-    for (const t of tables) {
-      const l = layerOf.get(t.id) ?? 0
-      if (!groups.has(l)) groups.set(l, [])
-      groups.get(l)!.push(t)
-    }
-    for (const g of groups.values()) g.sort((a, b) => a.position.y - b.position.y)
-
-    // BASE_H: 2px borders + 36px header + 1px border + 20px labels bar + 1px border
-    //       + 4px container-top + 4px container-bottom + 1px border + 28px add-col btn + 2px borders
     const BASE_H = 99
-    // Each ColumnRow: py-1 (4+4) + h-6 TypeSelect (24px, always in DOM) = 32px
-    // Empty table shows "No columns" py-2 text-xs = 32px — treat as 1 virtual row
     const COL_H = 28
     const GAP_Y = 24
     const COL_W = 440
     const START_X = 60
     const START_Y = 60
 
-    for (const [layer, group] of [...groups.entries()].sort((a, b) => a[0] - b[0])) {
+    const tableSet = new Set(tables.map((t) => t.id))
+    const validEdges = edges.filter(
+      (e) => tableSet.has(e.source) && tableSet.has(e.target) && e.source !== e.target
+    )
+
+    // Step 1: snap each table to nearest column based on current X
+    const colOf = new Map<string, number>()
+    for (const t of tables) {
+      colOf.set(t.id, Math.max(0, Math.round((t.position.x - START_X) / COL_W)))
+    }
+
+    // Step 2: enforce referencer (edge.source = FK table) is RIGHT of referenced (edge.target)
+    // i.e. col(source) >= col(target) + 1
+    // Iterate to propagate chains; cap at tables.length to break cycles
+    for (let pass = 0; pass < tables.length; pass++) {
+      let changed = false
+      for (const e of validEdges) {
+        const srcCol = colOf.get(e.source) ?? 0
+        const tgtCol = colOf.get(e.target) ?? 0
+        if (tgtCol <= srcCol) {
+          colOf.set(e.target, srcCol + 1)
+          changed = true
+        }
+      }
+      if (!changed) break
+    }
+
+    // Compact: remap sparse column indices to consecutive 0,1,2,...
+    const usedCols = [...new Set(colOf.values())].sort((a, b) => a - b)
+    const compactCol = new Map(usedCols.map((c, i) => [c, i]))
+    for (const [id, col] of colOf) colOf.set(id, compactCol.get(col)!)
+
+    // Step 3: group by column, sort within column by current Y
+    const groups = new Map<number, ERDTable[]>()
+    for (const t of tables) {
+      const col = colOf.get(t.id) ?? 0
+      if (!groups.has(col)) groups.set(col, [])
+      groups.get(col)!.push(t)
+    }
+    for (const g of groups.values()) g.sort((a, b) => a.position.y - b.position.y)
+
+    // Step 4: place
+    for (const [col, group] of groups) {
       let y = START_Y
       for (const t of group) {
-        store.updateTablePosition(t.id, { x: START_X + layer * COL_W, y })
+        store.updateTablePosition(t.id, { x: START_X + col * COL_W, y })
         y += BASE_H + Math.max(1, t.columns.length) * COL_H + GAP_Y
       }
     }
