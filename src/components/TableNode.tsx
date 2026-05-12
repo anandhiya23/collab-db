@@ -1,10 +1,78 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { Handle, Position, NodeProps } from '@xyflow/react'
-import { Trash2, Plus, Key, Link, ChevronDown } from 'lucide-react'
+import { Trash2, Plus, Key, ChevronDown } from 'lucide-react'
 import { useERDStore } from '@/lib/store'
 import { ERDTable, Column, PG_TYPES, PGType } from '@/types/erd'
+
+function TypeSelect({
+  value,
+  onChange,
+}: {
+  value: PGType
+  onChange: (t: PGType) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div ref={ref} className="nodrag relative flex-shrink-0">
+      <button
+        className="flex items-center justify-center w-6 h-6"
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
+      >
+        <ChevronDown size={10} style={{ color: 'var(--text-muted)' }} />
+      </button>
+      {open && (
+        <div
+          className="nodrag absolute z-50 right-0 top-full mt-0.5 rounded overflow-auto"
+          style={{
+            background: '#1e2030',
+            border: '1px solid var(--border)',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+            minWidth: 120,
+            maxHeight: 200,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {PG_TYPES.map((t) => (
+            <div
+              key={t}
+              className="px-3 py-1 text-xs cursor-pointer"
+              style={{
+                color: t === value ? 'var(--accent)' : 'var(--text)',
+                background: t === value ? 'rgba(99,102,241,0.15)' : 'transparent',
+              }}
+              onMouseEnter={(e) => {
+                if (t !== value) (e.currentTarget as HTMLDivElement).style.background = 'var(--surface-2)'
+              }}
+              onMouseLeave={(e) => {
+                if (t !== value) (e.currentTarget as HTMLDivElement).style.background = 'transparent'
+              }}
+              onClick={(e) => {
+                e.stopPropagation()
+                onChange(t)
+                setOpen(false)
+              }}
+            >
+              {t}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 const TYPE_BADGE_COLOR: Record<string, string> = {
   SERIAL: '#6366f1',
@@ -31,11 +99,13 @@ function ColumnRow({
   tableId,
   isEditing,
   onStartEdit,
+  onStopEdit,
 }: {
   col: Column
   tableId: string
   isEditing: boolean
   onStartEdit: () => void
+  onStopEdit: () => void
 }) {
   const { updateColumn, deleteColumn } = useERDStore()
   const [editName, setEditName] = useState(col.name)
@@ -46,7 +116,8 @@ function ColumnRow({
     } else {
       setEditName(col.name)
     }
-  }, [editName, col.name, col.id, tableId, updateColumn])
+    onStopEdit()
+  }, [editName, col.name, col.id, tableId, updateColumn, onStopEdit])
 
   const formatType = (c: Column) => {
     if (c.type === 'VARCHAR') return `VARCHAR(${c.length ?? 255})`
@@ -75,7 +146,7 @@ function ColumnRow({
           onBlur={commitName}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commitName()
-            if (e.key === 'Escape') setEditName(col.name)
+            if (e.key === 'Escape') { setEditName(col.name); onStopEdit() }
           }}
           onClick={(e) => e.stopPropagation()}
         />
@@ -113,16 +184,11 @@ function ColumnRow({
 
       {/* Type selector (visible on hover) */}
       {!col.primaryKey && (
-        <div className="relative flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-          <select
-            className="absolute right-0 top-0 opacity-0 w-6 h-6 cursor-pointer"
+        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+          <TypeSelect
             value={col.type}
-            onChange={(e) => updateColumn(tableId, col.id, { type: e.target.value as PGType })}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {PG_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <ChevronDown size={10} style={{ color: 'var(--text-muted)' }} />
+            onChange={(t) => updateColumn(tableId, col.id, { type: t })}
+          />
         </div>
       )}
 
@@ -281,6 +347,7 @@ export function TableNode({ id, selected }: NodeProps) {
             tableId={table.id}
             isEditing={editingColId === col.id}
             onStartEdit={() => setEditingColId(col.id)}
+            onStopEdit={() => setEditingColId(null)}
           />
         ))}
       </div>

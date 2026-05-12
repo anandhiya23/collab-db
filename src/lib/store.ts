@@ -2,10 +2,15 @@ import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 import { v4 as uuidv4 } from 'uuid'
 import { Column, ERDEdge, ERDTable, PGType } from '@/types/erd'
+import { Op } from '@/types/op'
 
 interface ERDStore {
   tables: ERDTable[]
   edges: ERDEdge[]
+  _opListener: ((op: Op) => void) | null
+
+  setOpListener: (fn: ((op: Op) => void) | null) => void
+  applyOp: (op: Op) => void
 
   addTable: (name: string, position?: { x: number; y: number }) => void
   updateTableName: (id: string, name: string) => void
@@ -24,97 +29,147 @@ interface ERDStore {
 }
 
 export const useERDStore = create<ERDStore>()(
-  subscribeWithSelector((set) => ({
+  subscribeWithSelector((set, get) => ({
     tables: [],
     edges: [],
+    _opListener: null,
 
-    addTable: (name, position = { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 }) =>
-      set((state) => ({
-        tables: [
-          ...state.tables,
-          {
-            id: uuidv4(),
-            name,
-            position,
-            columns: [
-              {
-                id: uuidv4(),
-                name: 'id',
-                type: 'SERIAL' as PGType,
-                primaryKey: true,
-                notNull: true,
-                unique: false,
-              },
-            ],
-          },
-        ],
-      })),
+    setOpListener: (fn) => set({ _opListener: fn }),
 
-    updateTableName: (id, name) =>
-      set((state) => ({
-        tables: state.tables.map((t) => (t.id === id ? { ...t, name } : t)),
-      })),
+    applyOp: (op) =>
+      set((state) => {
+        switch (op.type) {
+          case 'add-table':
+            return { tables: [...state.tables, op.table] }
+          case 'delete-table':
+            return {
+              tables: state.tables.filter((t) => t.id !== op.id),
+              edges: state.edges.filter((e) => e.source !== op.id && e.target !== op.id),
+            }
+          case 'update-table-name':
+            return { tables: state.tables.map((t) => (t.id === op.id ? { ...t, name: op.name } : t)) }
+          case 'move-table':
+            return { tables: state.tables.map((t) => (t.id === op.id ? { ...t, position: op.position } : t)) }
+          case 'add-column':
+            return {
+              tables: state.tables.map((t) =>
+                t.id === op.tableId ? { ...t, columns: [...t.columns, op.column] } : t
+              ),
+            }
+          case 'update-column':
+            return {
+              tables: state.tables.map((t) =>
+                t.id !== op.tableId
+                  ? t
+                  : { ...t, columns: t.columns.map((c) => (c.id === op.columnId ? { ...c, ...op.updates } : c)) }
+              ),
+            }
+          case 'delete-column':
+            return {
+              tables: state.tables.map((t) =>
+                t.id !== op.tableId ? t : { ...t, columns: t.columns.filter((c) => c.id !== op.columnId) }
+              ),
+            }
+          case 'add-edge':
+            return { edges: [...state.edges, op.edge] }
+          case 'delete-edge':
+            return { edges: state.edges.filter((e) => e.id !== op.id) }
+          case 'load-state':
+            return { tables: op.tables, edges: op.edges }
+          case 'clear-all':
+            return { tables: [], edges: [] }
+          default:
+            return state
+        }
+      }),
 
-    updateTablePosition: (id, position) =>
-      set((state) => ({
-        tables: state.tables.map((t) => (t.id === id ? { ...t, position } : t)),
-      })),
+    addTable: (name, position = { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 }) => {
+      const table: ERDTable = {
+        id: uuidv4(),
+        name,
+        position,
+        columns: [{ id: uuidv4(), name: 'id', type: 'SERIAL' as PGType, primaryKey: true, notNull: true, unique: false }],
+      }
+      set((state) => ({ tables: [...state.tables, table] }))
+      get()._opListener?.({ type: 'add-table', table })
+    },
 
-    deleteTable: (id) =>
+    updateTableName: (id, name) => {
+      set((state) => ({ tables: state.tables.map((t) => (t.id === id ? { ...t, name } : t)) }))
+      get()._opListener?.({ type: 'update-table-name', id, name })
+    },
+
+    updateTablePosition: (id, position) => {
+      set((state) => ({ tables: state.tables.map((t) => (t.id === id ? { ...t, position } : t)) }))
+      get()._opListener?.({ type: 'move-table', id, position })
+    },
+
+    deleteTable: (id) => {
       set((state) => ({
         tables: state.tables.filter((t) => t.id !== id),
         edges: state.edges.filter((e) => e.source !== id && e.target !== id),
-      })),
+      }))
+      get()._opListener?.({ type: 'delete-table', id })
+    },
 
-    addColumn: (tableId) =>
+    addColumn: (tableId) => {
+      const table = get().tables.find((t) => t.id === tableId)
+      if (!table) return
+      const column: Column = {
+        id: uuidv4(),
+        name: `column_${table.columns.length + 1}`,
+        type: 'VARCHAR' as PGType,
+        length: 255,
+        primaryKey: false,
+        notNull: false,
+        unique: false,
+      }
       set((state) => ({
-        tables: state.tables.map((t) => {
-          if (t.id !== tableId) return t
-          return {
-            ...t,
-            columns: [
-              ...t.columns,
-              {
-                id: uuidv4(),
-                name: `column_${t.columns.length + 1}`,
-                type: 'VARCHAR' as PGType,
-                length: 255,
-                primaryKey: false,
-                notNull: false,
-                unique: false,
-              },
-            ],
-          }
-        }),
-      })),
+        tables: state.tables.map((t) =>
+          t.id === tableId ? { ...t, columns: [...t.columns, column] } : t
+        ),
+      }))
+      get()._opListener?.({ type: 'add-column', tableId, column })
+    },
 
-    updateColumn: (tableId, columnId, updates) =>
+    updateColumn: (tableId, columnId, updates) => {
       set((state) => ({
-        tables: state.tables.map((t) => {
-          if (t.id !== tableId) return t
-          return {
-            ...t,
-            columns: t.columns.map((c) => (c.id === columnId ? { ...c, ...updates } : c)),
-          }
-        }),
-      })),
+        tables: state.tables.map((t) =>
+          t.id !== tableId
+            ? t
+            : { ...t, columns: t.columns.map((c) => (c.id === columnId ? { ...c, ...updates } : c)) }
+        ),
+      }))
+      get()._opListener?.({ type: 'update-column', tableId, columnId, updates })
+    },
 
-    deleteColumn: (tableId, columnId) =>
+    deleteColumn: (tableId, columnId) => {
       set((state) => ({
-        tables: state.tables.map((t) => {
-          if (t.id !== tableId) return t
-          return { ...t, columns: t.columns.filter((c) => c.id !== columnId) }
-        }),
-      })),
+        tables: state.tables.map((t) =>
+          t.id !== tableId ? t : { ...t, columns: t.columns.filter((c) => c.id !== columnId) }
+        ),
+      }))
+      get()._opListener?.({ type: 'delete-column', tableId, columnId })
+    },
 
-    addEdge: (edge) =>
-      set((state) => ({ edges: [...state.edges, edge] })),
+    addEdge: (edge) => {
+      set((state) => ({ edges: [...state.edges, edge] }))
+      get()._opListener?.({ type: 'add-edge', edge })
+    },
 
-    deleteEdge: (id) =>
-      set((state) => ({ edges: state.edges.filter((e) => e.id !== id) })),
+    deleteEdge: (id) => {
+      set((state) => ({ edges: state.edges.filter((e) => e.id !== id) }))
+      get()._opListener?.({ type: 'delete-edge', id })
+    },
 
-    loadState: (tables, edges) => set({ tables, edges }),
+    loadState: (tables, edges) => {
+      set({ tables, edges })
+      get()._opListener?.({ type: 'load-state', tables, edges })
+    },
 
-    clearAll: () => set({ tables: [], edges: [] }),
+    clearAll: () => {
+      set({ tables: [], edges: [] })
+      get()._opListener?.({ type: 'clear-all' })
+    },
   }))
 )

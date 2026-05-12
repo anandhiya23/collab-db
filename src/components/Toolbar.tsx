@@ -1,20 +1,42 @@
 'use client'
 
-import { useState } from 'react'
-import { Plus, Copy, Check, Users, Trash2, GitBranch } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { Plus, Copy, Check, Users, Trash2, GitBranch, LayoutGrid, Pencil, History } from 'lucide-react'
 
 interface ToolbarProps {
   roomId: string
   userCount: number
+  userName: string
+  userColor: string
+  historyCount: number
+  showHistory: boolean
   onAddTable: () => void
   onClearAll: () => void
+  onTidy: () => void
+  onRenameUser: (name: string) => void
+  onToggleHistory: () => void
 }
 
-export function Toolbar({ roomId, userCount, onAddTable, onClearAll }: ToolbarProps) {
+export function Toolbar({ roomId, userCount, userName, userColor, historyCount, showHistory, onAddTable, onClearAll, onTidy, onRenameUser, onToggleHistory }: ToolbarProps) {
   const [copied, setCopied] = useState(false)
+  const [editingName, setEditingName] = useState(false)
+  const [nameVal, setNameVal] = useState(userName)
+  const nameInputRef = useRef<HTMLInputElement>(null)
 
-  const shareUrl =
-    typeof window !== 'undefined' ? `${window.location.origin}/room/${roomId}` : ''
+  useEffect(() => { setNameVal(userName) }, [userName])
+  useEffect(() => { if (editingName) nameInputRef.current?.select() }, [editingName])
+
+  const commitName = () => {
+    const trimmed = nameVal.trim()
+    if (trimmed) onRenameUser(trimmed)
+    else setNameVal(userName)
+    setEditingName(false)
+  }
+
+  const [shareUrl, setShareUrl] = useState('')
+  useEffect(() => {
+    setShareUrl(`${window.location.origin}/room/${roomId}`)
+  }, [roomId])
 
   const handleCopyLink = async () => {
     await navigator.clipboard.writeText(shareUrl)
@@ -79,6 +101,68 @@ export function Toolbar({ roomId, userCount, onAddTable, onClearAll }: ToolbarPr
         Clear
       </button>
 
+      {/* Tidy */}
+      <button
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-all"
+        style={{
+          background: 'transparent',
+          color: 'var(--text-muted)',
+          border: '1px solid var(--border)',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = 'var(--surface-2)'
+          e.currentTarget.style.color = 'var(--text)'
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'transparent'
+          e.currentTarget.style.color = 'var(--text-muted)'
+        }}
+        onClick={onTidy}
+        title="Auto-arrange tables in a grid"
+      >
+        <LayoutGrid size={14} />
+        Tidy
+      </button>
+
+      {/* History */}
+      <button
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-all"
+        style={{
+          background: showHistory ? 'var(--accent)' : 'transparent',
+          color: showHistory ? '#fff' : 'var(--text-muted)',
+          border: `1px solid ${showHistory ? 'var(--accent)' : 'var(--border)'}`,
+        }}
+        onMouseEnter={(e) => {
+          if (!showHistory) {
+            e.currentTarget.style.background = 'var(--surface-2)'
+            e.currentTarget.style.color = 'var(--text)'
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (!showHistory) {
+            e.currentTarget.style.background = 'transparent'
+            e.currentTarget.style.color = 'var(--text-muted)'
+          }
+        }}
+        onClick={onToggleHistory}
+        title="Toggle history panel"
+      >
+        <History size={14} />
+        History
+        {historyCount > 0 && (
+          <span
+            className="px-1 rounded text-[10px]"
+            style={{
+              background: showHistory ? 'rgba(255,255,255,0.2)' : 'var(--surface)',
+              color: showHistory ? '#fff' : 'var(--text-muted)',
+              border: showHistory ? 'none' : '1px solid var(--border)',
+            }}
+          >
+            {historyCount}
+          </span>
+        )}
+      </button>
+
       <div className="flex-1" />
 
       {/* User count */}
@@ -92,6 +176,37 @@ export function Toolbar({ roomId, userCount, onAddTable, onClearAll }: ToolbarPr
       >
         <Users size={12} />
         {userCount} {userCount === 1 ? 'user' : 'users'}
+      </div>
+
+      {/* Username */}
+      <div
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs"
+        style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}
+      >
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: userColor, flexShrink: 0, display: 'inline-block' }} />
+        {editingName ? (
+          <input
+            ref={nameInputRef}
+            className="bg-transparent outline-none text-xs"
+            style={{ color: 'var(--text)', width: 100 }}
+            value={nameVal}
+            onChange={(e) => setNameVal(e.target.value)}
+            onBlur={commitName}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitName()
+              if (e.key === 'Escape') { setNameVal(userName); setEditingName(false) }
+            }}
+          />
+        ) : (
+          <span style={{ color: 'var(--text)' }}>{userName}</span>
+        )}
+        <button
+          className="transition-opacity opacity-50 hover:opacity-100"
+          onClick={() => setEditingName(true)}
+          title="Change display name"
+        >
+          <Pencil size={10} style={{ color: 'var(--text-muted)' }} />
+        </button>
       </div>
 
       {/* Share link */}
