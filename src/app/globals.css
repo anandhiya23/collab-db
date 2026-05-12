@@ -1,0 +1,107 @@
+@import '@xyflow/react/dist/style.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0f1117;
+  --surface: #1a1d27;
+  --surface-2: #222536;
+  --border: #2d3148;
+  --text: #e2e8f0;
+  --text-muted: #7c86a2;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--background);
+  color: var(--text);
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* React Flow customization */
+.react-flow__background {
+  background-color: var(--background) !important;
+}
+
+.react-flow__edge-path {
+  stroke: var(--accent) !important;
+  stroke-width: 2 !important;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--accent-hover) !important;
+}
+
+.react-flow__handle {
+  width: 10px !important;
+  height: 10px !important;
+  border-radius: 50% !important;
+  background: var(--accent) !important;
+  border: 2px solid var(--surface) !important;
+}
+
+.react-flow__handle:hover {
+  background: var(--accent-hover) !important;
+}
+
+.react-flow__controls {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background: var(--surface) !important;
+  border: none !important;
+  border-bottom: 1px solid var(--border) !important;
+  color: var(--text-muted) !important;
+  fill: var(--text-muted) !important;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--surface-2) !important;
+  fill: var(--text) !important;
+}
+
+.react-flow__minimap {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+}
+
+/* SQL Highlighting */
+.sql-keyword {
+  color: #c792ea;
+  font-weight: 600;
+}
+.sql-type {
+  color: #82aaff;
+}
+.sql-constraint {
+  color: #ffcb6b;
+}
+.sql-table-name {
+  color: #c3e88d;
+}
+.sql-comment {
+  color: #546e7a;
+  font-style: italic;
+}
+.sql-punct {
+  color: #89ddff;
+}
