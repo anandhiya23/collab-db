@@ -7,6 +7,9 @@ import {
   Controls,
   MiniMap,
   BackgroundVariant,
+  BaseEdge,
+  EdgeLabelRenderer,
+  getSmoothStepPath,
   useNodesState,
   useEdgesState,
   useReactFlow,
@@ -16,6 +19,7 @@ import {
   type Connection,
   type NodeChange,
   type EdgeChange,
+  type EdgeProps,
   type Node,
   type Edge,
 } from '@xyflow/react'
@@ -23,7 +27,75 @@ import { TableNode } from './TableNode'
 import { ERDTable, ERDEdge } from '@/types/erd'
 import { RemoteCanvasCursor } from '@/types/presence'
 
+function RelationEdge({
+  selected, sourceX, sourceY, targetX, targetY,
+  sourcePosition, targetPosition, data, markerEnd,
+}: EdgeProps) {
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
+    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition,
+  })
+  const stroke = selected ? '#818cf8' : '#6366f1'
+  return (
+    <>
+      <BaseEdge
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={{ stroke, strokeWidth: selected ? 2.5 : 2 }}
+      />
+      <EdgeLabelRenderer>
+        <div
+          className="nodrag nopan"
+          style={{
+            position: 'absolute',
+            transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`,
+            pointerEvents: 'all',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+        >
+          <span
+            style={{
+              background: '#1a1d27',
+              color: selected ? '#a5b4fc' : '#7c86a2',
+              fontSize: 10,
+              fontFamily: 'monospace',
+              padding: '2px 6px',
+              borderRadius: 3,
+              border: `1px solid ${selected ? '#6366f144' : 'transparent'}`,
+            }}
+          >
+            {(data as Record<string, unknown>).label as string}
+          </span>
+          {selected && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                ;(data as Record<string, unknown>).onDelete?.()
+              }}
+              style={{
+                background: '#ef444422',
+                border: '1px solid #ef444466',
+                borderRadius: 3,
+                color: '#ef4444',
+                fontSize: 13,
+                lineHeight: '16px',
+                cursor: 'pointer',
+                padding: '0 5px',
+                fontWeight: 700,
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  )
+}
+
 const nodeTypes = { tableNode: TableNode }
+const edgeTypes = { erdEdge: RelationEdge }
 
 interface ERDCanvasProps {
   tables: ERDTable[]
@@ -31,6 +103,7 @@ interface ERDCanvasProps {
   remoteVersion: number
   remoteCursors: RemoteCanvasCursor[]
   screenToFlowRef?: React.MutableRefObject<((pos: { x: number; y: number }) => { x: number; y: number }) | null>
+  focusTableRef?: React.MutableRefObject<((tableId: string) => void) | null>
   onNodeDragStop: (tableId: string, position: { x: number; y: number }) => void
   onConnect: (connection: Connection) => void
   onEdgeDelete: (edgeId: string) => void
@@ -47,12 +120,12 @@ function makeNode(table: ERDTable): Node {
   }
 }
 
-function erdEdgeToRFEdge(edge: ERDEdge, tables: ERDTable[]): Edge {
+function erdEdgeToRFEdge(edge: ERDEdge, tables: ERDTable[], onDelete: (id: string) => void): Edge {
   const src = tables.find((t) => t.id === edge.source)
   const tgt = tables.find((t) => t.id === edge.target)
   const srcCol = src?.columns.find((c) => c.id === edge.data.sourceColumnId)
   const tgtCol = tgt?.columns.find((c) => c.id === edge.data.targetColumnId)
-  const label =
+  const rel =
     edge.data.relationType === 'one-to-one' ? '1:1'
     : edge.data.relationType === 'many-to-many' ? 'N:M'
     : '1:N'
@@ -61,13 +134,12 @@ function erdEdgeToRFEdge(edge: ERDEdge, tables: ERDTable[]): Edge {
     id: edge.id,
     source: edge.source,
     target: edge.target,
-    type: 'smoothstep',
+    type: 'erdEdge',
     animated: false,
-    label: `${srcCol?.name ?? '?'} → ${tgtCol?.name ?? '?'} (${label})`,
-    labelStyle: { fill: '#7c86a2', fontSize: 10, fontFamily: 'monospace' },
-    labelBgStyle: { fill: '#1a1d27', fillOpacity: 0.9 },
-    labelBgPadding: [4, 2] as [number, number],
-    style: { stroke: '#6366f1', strokeWidth: 2 },
+    data: {
+      label: `${srcCol?.name ?? '?'} → ${tgtCol?.name ?? '?'} (${rel})`,
+      onDelete: () => onDelete(edge.id),
+    },
     markerEnd: { type: 'arrowclosed' as const, color: '#6366f1' },
   }
 }
@@ -169,6 +241,7 @@ function CanvasInner({
   remoteVersion,
   remoteCursors,
   screenToFlowRef,
+  focusTableRef,
   onNodeDragStop,
   onConnect,
   onEdgeDelete,
@@ -176,7 +249,11 @@ function CanvasInner({
   onCursorMove,
 }: ERDCanvasProps) {
   const [nodes, setNodes] = useNodesState(tables.map(makeNode))
-  const [rfEdges, setRfEdges] = useEdgesState(edges.map((e) => erdEdgeToRFEdge(e, tables)))
+  const onEdgeDeleteRef = useRef(onEdgeDelete)
+  onEdgeDeleteRef.current = onEdgeDelete
+  const [rfEdges, setRfEdges] = useEdgesState(
+    edges.map((e) => erdEdgeToRFEdge(e, tables, (id) => onEdgeDeleteRef.current(id)))
+  )
   const draggingIds = useRef(new Set<string>())
   const rf = useReactFlow()
   const lastCursorTime = useRef(0)
@@ -184,6 +261,17 @@ function CanvasInner({
   useEffect(() => {
     if (screenToFlowRef) screenToFlowRef.current = rf.screenToFlowPosition
   }, [rf, screenToFlowRef])
+
+  const tablesRef = useRef(tables)
+  tablesRef.current = tables
+  useEffect(() => {
+    if (!focusTableRef) return
+    focusTableRef.current = (tableId: string) => {
+      const t = tablesRef.current.find((t) => t.id === tableId)
+      if (!t) return
+      rf.setCenter(t.position.x + 170, t.position.y + 80, { zoom: 1.2, duration: 500 })
+    }
+  }, [rf, focusTableRef])
 
   const tableIdKey = tables.map((t) => t.id).join(',')
   const prevTableIdKey = useRef(tableIdKey)
@@ -215,7 +303,7 @@ function CanvasInner({
 
   const edgeKey = edges.map((e) => e.id).join(',')
   useEffect(() => {
-    setRfEdges(edges.map((e) => erdEdgeToRFEdge(e, tables)))
+    setRfEdges(edges.map((e) => erdEdgeToRFEdge(e, tables, (id) => onEdgeDeleteRef.current(id))))
   }, [edgeKey, tables]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleNodesChange = useCallback(
@@ -250,6 +338,20 @@ function CanvasInner({
     [onNodeDragStop]
   )
 
+  const handleSelectionDragStart = useCallback((_: React.MouseEvent, nodes: Node[]) => {
+    for (const n of nodes) draggingIds.current.add(n.id)
+  }, [])
+
+  const handleSelectionDragStop = useCallback(
+    (_: React.MouseEvent, nodes: Node[]) => {
+      for (const n of nodes) {
+        draggingIds.current.delete(n.id)
+        onNodeDragStop(n.id, { x: n.position.x, y: n.position.y })
+      }
+    },
+    [onNodeDragStop]
+  )
+
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
       const now = Date.now()
@@ -267,10 +369,13 @@ function CanvasInner({
         nodes={nodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onNodeDragStart={handleNodeDragStart}
         onNodeDragStop={handleNodeDragStop}
+        onSelectionDragStart={handleSelectionDragStart}
+        onSelectionDragStop={handleSelectionDragStop}
         onConnect={onConnect}
         onMouseMove={handleMouseMove}
         deleteKeyCode={null}
@@ -293,6 +398,8 @@ function CanvasInner({
           }}
           nodeColor="#6366f1"
           maskColor="rgba(15,17,23,0.8)"
+          pannable
+          zoomable
         />
       </ReactFlow>
       <CursorLayer cursors={remoteCursors} />

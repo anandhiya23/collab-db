@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Plus, Copy, Check, Users, Trash2, GitBranch, LayoutGrid, Pencil, History } from 'lucide-react'
+import { Plus, Copy, Check, Users, Trash2, GitBranch, LayoutGrid, Pencil, History, Search } from 'lucide-react'
 
 interface ToolbarProps {
   roomId: string
@@ -10,18 +10,37 @@ interface ToolbarProps {
   userColor: string
   historyCount: number
   showHistory: boolean
+  tables: { id: string; name: string }[]
   onAddTable: () => void
   onClearAll: () => void
   onTidy: () => void
   onRenameUser: (name: string) => void
   onToggleHistory: () => void
+  onFocusTable: (tableId: string) => void
 }
 
-export function Toolbar({ roomId, userCount, userName, userColor, historyCount, showHistory, onAddTable, onClearAll, onTidy, onRenameUser, onToggleHistory }: ToolbarProps) {
+export function Toolbar({ roomId, userCount, userName, userColor, historyCount, showHistory, tables, onAddTable, onClearAll, onTidy, onRenameUser, onToggleHistory, onFocusTable }: ToolbarProps) {
   const [copied, setCopied] = useState(false)
   const [editingName, setEditingName] = useState(false)
   const [nameVal, setNameVal] = useState(userName)
   const nameInputRef = useRef<HTMLInputElement>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const searchRef = useRef<HTMLDivElement>(null)
+
+  const searchResults = searchQuery.trim()
+    ? tables.filter((t) => t.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    : tables
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [])
 
   useEffect(() => { setNameVal(userName) }, [userName])
   useEffect(() => { if (editingName) nameInputRef.current?.select() }, [editingName])
@@ -39,9 +58,18 @@ export function Toolbar({ roomId, userCount, userName, userColor, historyCount, 
   }, [roomId])
 
   const handleCopyLink = async () => {
-    await navigator.clipboard.writeText(shareUrl)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(shareUrl)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } else {
+      const el = document.createElement('textarea')
+      el.value = shareUrl
+      document.body.appendChild(el)
+      el.select()
+      document.execCommand('copy')
+      document.body.removeChild(el)
+    }
   }
 
   return (
@@ -162,6 +190,72 @@ export function Toolbar({ roomId, userCount, userName, userColor, historyCount, 
           </span>
         )}
       </button>
+
+      {/* Search */}
+      <div ref={searchRef} style={{ position: 'relative' }}>
+        <div
+          className="flex items-center gap-1.5 px-2.5 py-1"
+          style={{
+            background: 'var(--surface-2)',
+            border: `1px solid ${searchOpen ? 'var(--accent)' : 'var(--border)'}`,
+            borderRadius: 6,
+            width: 180,
+          }}
+        >
+          <Search size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+          <input
+            className="bg-transparent outline-none text-xs w-full"
+            style={{ color: 'var(--text)' }}
+            placeholder="Find table…"
+            value={searchQuery}
+            onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true) }}
+            onFocus={() => setSearchOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') { setSearchOpen(false); setSearchQuery('') }
+              if (e.key === 'Enter' && searchResults.length > 0) {
+                onFocusTable(searchResults[0].id)
+                setSearchOpen(false)
+                setSearchQuery('')
+              }
+            }}
+          />
+        </div>
+        {searchOpen && searchResults.length > 0 && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              marginTop: 4,
+              width: 180,
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 6,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+              zIndex: 100,
+              overflow: 'hidden',
+            }}
+          >
+            {searchResults.slice(0, 8).map((t) => (
+              <button
+                key={t.id}
+                className="w-full text-left px-3 py-1.5 text-xs transition-colors"
+                style={{ color: 'var(--text)', fontFamily: 'monospace' }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-2)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  onFocusTable(t.id)
+                  setSearchOpen(false)
+                  setSearchQuery('')
+                }}
+              >
+                {t.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="flex-1" />
 

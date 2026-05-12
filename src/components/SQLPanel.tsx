@@ -8,6 +8,29 @@ import { RemoteDBMLCursor } from '@/types/presence'
 
 type Tab = 'sql' | 'dbml'
 
+// Reorder table blocks in `generated` to match the table order in `reference`.
+// New tables (not in reference) are appended at end. Preserves header/Ref lines.
+function reorderDBML(generated: string, reference: string): string {
+  const preferred = [...reference.matchAll(/^Table\s+(\w+)/gm)].map((m) => m[1])
+  const chunks = generated.split('\n\n')
+  const headers: string[] = []
+  const tableChunks = new Map<string, string>()
+  const refChunks: string[] = []
+  for (const chunk of chunks) {
+    const t = chunk.trimStart()
+    if (t.startsWith('//')) headers.push(chunk)
+    else if (t.startsWith('Table ')) {
+      const m = t.match(/^Table\s+(\w+)/)
+      if (m) tableChunks.set(m[1], chunk)
+    } else if (t) refChunks.push(chunk)
+  }
+  const ordered = [
+    ...preferred.filter((n) => tableChunks.has(n)).map((n) => tableChunks.get(n)!),
+    ...[...tableChunks.entries()].filter(([n]) => !preferred.includes(n)).map(([, v]) => v),
+  ]
+  return [...headers, ...ordered, ...refChunks].filter(Boolean).join('\n\n')
+}
+
 interface SQLPanelProps {
   sql: string
   dbml: string
@@ -23,9 +46,17 @@ export function SQLPanel({ sql, dbml, remoteDBMLCursors, onDBMLChange, onDBMLCur
   const [localDBML, setLocalDBML] = useState(dbml)
   const [isEditingDBML, setIsEditingDBML] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const wasEditingRef = useRef(false)
 
   useEffect(() => {
-    if (!isEditingDBML) setLocalDBML(dbml)
+    const wasEditing = wasEditingRef.current
+    wasEditingRef.current = isEditingDBML
+    // Only overwrite user's textarea when dbml changes while already not editing
+    // (remote change). Transitioning from editing→not-editing (blur) must NOT
+    // overwrite because generateDBML reorders tables vs what the user typed.
+    if (!isEditingDBML && !wasEditing) {
+      setLocalDBML((prev) => reorderDBML(dbml, prev))
+    }
   }, [dbml, isEditingDBML])
 
   const reportCursorLine = useCallback(
@@ -48,7 +79,16 @@ export function SQLPanel({ sql, dbml, remoteDBMLCursors, onDBMLChange, onDBMLCur
   const activeCode = tab === 'sql' ? sql : localDBML
 
   const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(activeCode)
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(activeCode)
+    } else {
+      const el = document.createElement('textarea')
+      el.value = activeCode
+      document.body.appendChild(el)
+      el.select()
+      document.execCommand('copy')
+      document.body.removeChild(el)
+    }
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }, [activeCode])

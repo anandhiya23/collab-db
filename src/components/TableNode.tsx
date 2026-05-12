@@ -1,37 +1,73 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Handle, Position, NodeProps } from '@xyflow/react'
-import { Trash2, Plus, Key, ChevronDown } from 'lucide-react'
+import { Handle, Position, NodeProps, useReactFlow } from '@xyflow/react'
+import { Trash2, Plus, Key } from 'lucide-react'
 import { useERDStore } from '@/lib/store'
 import { ERDTable, Column, PG_TYPES, PGType } from '@/types/erd'
 
-function TypeSelect({
+function TypeBadge({
   value,
   onChange,
+  readonly,
+  onOpen,
+  onClose,
+  closeSignal,
 }: {
   value: PGType
   onChange: (t: PGType) => void
+  readonly?: boolean
+  onOpen?: () => void
+  onClose?: () => void
+  closeSignal?: number
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const color = TYPE_BADGE_COLOR[value] ?? '#6366f1'
+
+  useEffect(() => {
+    if (closeSignal) { setOpen(false) }
+  }, [closeSignal])
 
   useEffect(() => {
     if (!open) return
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false)
+        onClose?.()
+      }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [open])
+  }, [open, onClose])
+
+  const formatValue = (v: PGType) => {
+    if (v === 'VARCHAR') return `VARCHAR(…)`
+    if (v === 'DECIMAL') return `DECIMAL(…)`
+    return v
+  }
 
   return (
     <div ref={ref} className="nodrag relative flex-shrink-0">
       <button
-        className="flex items-center justify-center w-6 h-6"
-        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
+        className="px-1 rounded text-[10px] font-mono transition-opacity"
+        style={{
+          background: color + '22',
+          color,
+          border: `1px solid ${color}44`,
+          cursor: readonly ? 'default' : 'pointer',
+        }}
+        onClick={(e) => {
+          e.stopPropagation()
+          if (!readonly) {
+            const next = !open
+            setOpen(next)
+            if (next) onOpen?.(); else onClose?.()
+          }
+        }}
+        title={readonly ? undefined : 'Change type'}
       >
-        <ChevronDown size={10} style={{ color: 'var(--text-muted)' }} />
+        {formatValue(value)}
       </button>
       {open && (
         <div
@@ -63,6 +99,7 @@ function TypeSelect({
                 e.stopPropagation()
                 onChange(t)
                 setOpen(false)
+                onClose?.()
               }}
             >
               {t}
@@ -100,12 +137,18 @@ function ColumnRow({
   isEditing,
   onStartEdit,
   onStopEdit,
+  onDropdownOpen,
+  onDropdownClose,
+  dropdownCloseSignal,
 }: {
   col: Column
   tableId: string
   isEditing: boolean
   onStartEdit: () => void
   onStopEdit: () => void
+  onDropdownOpen?: () => void
+  onDropdownClose?: () => void
+  dropdownCloseSignal?: number
 }) {
   const { updateColumn, deleteColumn } = useERDStore()
   const [editName, setEditName] = useState(col.name)
@@ -119,18 +162,12 @@ function ColumnRow({
     onStopEdit()
   }, [editName, col.name, col.id, tableId, updateColumn, onStopEdit])
 
-  const formatType = (c: Column) => {
-    if (c.type === 'VARCHAR') return `VARCHAR(${c.length ?? 255})`
-    if (c.type === 'DECIMAL') return `DECIMAL(${c.precision ?? 10},${c.scale ?? 2})`
-    return c.type
-  }
-
   return (
     <div
       className="group flex items-center gap-1 px-2 py-1 text-xs hover:bg-[#2d3148] rounded cursor-pointer"
       style={{ minHeight: 28 }}
     >
-      {/* PK / FK indicator */}
+      {/* PK indicator */}
       <span className="w-4 flex-shrink-0">
         {col.primaryKey && <Key size={10} style={{ color: '#f59e0b' }} />}
       </span>
@@ -142,7 +179,14 @@ function ColumnRow({
           className="flex-1 bg-[#1a1d27] border border-indigo-500 rounded px-1 outline-none text-xs"
           style={{ color: 'var(--text)', minWidth: 0 }}
           value={editName}
-          onChange={(e) => setEditName(e.target.value)}
+          onChange={(e) => setEditName(e.target.value.replace(/ /g, '_'))}
+          onPaste={(e) => {
+            e.preventDefault()
+            const text = e.clipboardData.getData('text').replace(/\s+/g, '_')
+            const el = e.currentTarget
+            const next = editName.slice(0, el.selectionStart ?? editName.length) + text + editName.slice(el.selectionEnd ?? editName.length)
+            setEditName(next)
+          }}
           onBlur={commitName}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commitName()
@@ -160,83 +204,55 @@ function ColumnRow({
         </span>
       )}
 
-      {/* Type badge */}
-      <span
-        className="px-1 rounded text-[10px] font-mono flex-shrink-0"
-        style={{
-          background: (TYPE_BADGE_COLOR[col.type] ?? '#6366f1') + '22',
-          color: TYPE_BADGE_COLOR[col.type] ?? '#6366f1',
-          border: `1px solid ${(TYPE_BADGE_COLOR[col.type] ?? '#6366f1')}44`,
-        }}
-      >
-        {formatType(col)}
-      </span>
+      {/* Type badge — clickable to change type (non-PK) */}
+      <TypeBadge
+        value={col.type}
+        onChange={(t) => updateColumn(tableId, col.id, { type: t })}
+        readonly={col.primaryKey}
+        onOpen={onDropdownOpen}
+        onClose={onDropdownClose}
+        closeSignal={dropdownCloseSignal}
+      />
 
-      {/* Constraint tags */}
-      <span className="flex gap-0.5 flex-shrink-0">
-        {col.notNull && !col.primaryKey && (
-          <span className="text-[9px] px-0.5 rounded" style={{ color: '#f59e0b', background: '#f59e0b22' }}>NN</span>
-        )}
-        {col.unique && !col.primaryKey && (
-          <span className="text-[9px] px-0.5 rounded" style={{ color: '#10b981', background: '#10b98122' }}>UQ</span>
-        )}
-      </span>
-
-      {/* Type selector (visible on hover) */}
+      {/* NN / UQ — always visible, clickable toggles (non-PK) */}
       {!col.primaryKey && (
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-          <TypeSelect
-            value={col.type}
-            onChange={(t) => updateColumn(tableId, col.id, { type: t })}
-          />
-        </div>
-      )}
-
-      {/* Delete column button */}
-      {!col.primaryKey && (
-        <button
-          className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-          onClick={(e) => {
-            e.stopPropagation()
-            deleteColumn(tableId, col.id)
-          }}
-        >
-          <Trash2 size={10} style={{ color: 'var(--danger)' }} />
-        </button>
-      )}
-
-      {/* Constraint toggles on hover */}
-      {!col.primaryKey && (
-        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+        <span className="flex gap-0.5 flex-shrink-0">
           <button
-            className="text-[9px] px-0.5 rounded transition-colors"
+            className="text-[9px] px-0.5 rounded transition-colors nodrag"
             style={{
               color: col.notNull ? '#f59e0b' : 'var(--text-muted)',
               background: col.notNull ? '#f59e0b22' : 'transparent',
+              border: `1px solid ${col.notNull ? '#f59e0b44' : 'transparent'}`,
             }}
-            onClick={(e) => {
-              e.stopPropagation()
-              updateColumn(tableId, col.id, { notNull: !col.notNull })
-            }}
+            onClick={(e) => { e.stopPropagation(); updateColumn(tableId, col.id, { notNull: !col.notNull }) }}
             title="Toggle NOT NULL"
           >
             NN
           </button>
           <button
-            className="text-[9px] px-0.5 rounded transition-colors"
+            className="text-[9px] px-0.5 rounded transition-colors nodrag"
             style={{
               color: col.unique ? '#10b981' : 'var(--text-muted)',
               background: col.unique ? '#10b98122' : 'transparent',
+              border: `1px solid ${col.unique ? '#10b98144' : 'transparent'}`,
             }}
-            onClick={(e) => {
-              e.stopPropagation()
-              updateColumn(tableId, col.id, { unique: !col.unique })
-            }}
+            onClick={(e) => { e.stopPropagation(); updateColumn(tableId, col.id, { unique: !col.unique }) }}
             title="Toggle UNIQUE"
           >
             UQ
           </button>
-        </div>
+        </span>
+      )}
+
+      {/* Delete — hover only */}
+      {!col.primaryKey && (
+        <button
+          className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity nodrag"
+          onClick={(e) => { e.stopPropagation(); deleteColumn(tableId, col.id) }}
+          title="Delete column"
+        >
+          <Trash2 size={10} style={{ color: 'var(--danger)' }} />
+        </button>
       )}
     </div>
   )
@@ -248,6 +264,18 @@ export function TableNode({ id, selected }: NodeProps) {
   const [editingColId, setEditingColId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState(false)
   const [nameVal, setNameVal] = useState(table?.name ?? '')
+  const [dropdownCloseSignal, setDropdownCloseSignal] = useState(0)
+  const rf = useReactFlow()
+
+  const handleDropdownOpen = useCallback(() => {
+    rf.setNodes((nodes) => nodes.map((n) => ({ ...n, selected: n.id === id })))
+  }, [id, rf])
+
+  useEffect(() => {
+    if (!selected) {
+      setDropdownCloseSignal((s) => s + 1)
+    }
+  }, [selected]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!table) return null
 
@@ -348,6 +376,8 @@ export function TableNode({ id, selected }: NodeProps) {
             isEditing={editingColId === col.id}
             onStartEdit={() => setEditingColId(col.id)}
             onStopEdit={() => setEditingColId(null)}
+            onDropdownOpen={handleDropdownOpen}
+            dropdownCloseSignal={dropdownCloseSignal}
           />
         ))}
       </div>

@@ -164,78 +164,100 @@ export function parseDBML(code: string, existingTables: ERDTable[]): ERDState {
   const tables: ERDTable[] = []
   const edges: ERDEdge[] = []
 
-  // Strip single-line comments before parsing
   const stripped = code.replace(/\/\/.*$/gm, '')
+  const lines = stripped.split('\n')
 
-  const tableRe = /Table\s+(\w+)\s*\{([^}]*)\}/g
-  let m: RegExpExecArray | null
-
-  while ((m = tableRe.exec(stripped)) !== null) {
-    const tableName = m[1]
-    const body = m[2]
-
-    const existing = existingTables.find((t) => t.name === tableName)
-    const position = existing?.position ?? {
-      x: 150 + Math.random() * 400,
-      y: 150 + Math.random() * 300,
+  function parseColumn(raw: string, existing: ERDTable | undefined): Column | null {
+    const colMatch = raw.trim().match(/^(\w+)\s+([^\[]+?)\s*(?:\[([^\]]*)\])?$/)
+    if (!colMatch) return null
+    const [, name, rawType, settingsStr = ''] = colMatch
+    const settings = settingsStr.split(',').map((s) => s.trim()).filter(Boolean)
+    const hasPk = settings.some((s) => /^pk$/i.test(s) || /^primary key$/i.test(s))
+    const hasIncrement = settings.some((s) => /^increment$/i.test(s))
+    const hasUnique = settings.some((s) => /^unique$/i.test(s))
+    const hasNotNull = settings.some((s) => /^not null$/i.test(s))
+    const defaultSetting = settings.find((s) => /^default:/i.test(s))
+    const defaultVal = defaultSetting ? defaultSetting.replace(/^default:\s*/i, '').trim() : undefined
+    const { type, length, precision, scale } = parseDBMLType(rawType, hasIncrement)
+    const existingCol = existing?.columns.find((c) => c.name === name)
+    return {
+      id: existingCol?.id ?? uuidv4(),
+      name,
+      type,
+      ...(length !== undefined && { length }),
+      ...(precision !== undefined && { precision }),
+      ...(scale !== undefined && { scale }),
+      primaryKey: hasPk,
+      notNull: hasNotNull || hasPk,
+      unique: hasUnique,
+      ...(defaultVal !== undefined && { default: defaultVal }),
     }
-
-    const columns: Column[] = []
-    for (const line of body.split('\n').map((l) => l.trim()).filter(Boolean)) {
-      const colMatch = line.match(/^(\w+)\s+([^\[]+?)\s*(?:\[([^\]]*)\])?$/)
-      if (!colMatch) continue
-
-      const [, name, rawType, settingsStr = ''] = colMatch
-      const settings = settingsStr.split(',').map((s) => s.trim()).filter(Boolean)
-
-      const hasPk = settings.some((s) => /^pk$/i.test(s) || /^primary key$/i.test(s))
-      const hasIncrement = settings.some((s) => /^increment$/i.test(s))
-      const hasUnique = settings.some((s) => /^unique$/i.test(s))
-      const hasNotNull = settings.some((s) => /^not null$/i.test(s))
-      const defaultSetting = settings.find((s) => /^default:/i.test(s))
-      const defaultVal = defaultSetting ? defaultSetting.replace(/^default:\s*/i, '').trim() : undefined
-
-      const { type, length, precision, scale } = parseDBMLType(rawType, hasIncrement)
-      const existingCol = existing?.columns.find((c) => c.name === name)
-
-      columns.push({
-        id: existingCol?.id ?? uuidv4(),
-        name,
-        type,
-        ...(length !== undefined && { length }),
-        ...(precision !== undefined && { precision }),
-        ...(scale !== undefined && { scale }),
-        primaryKey: hasPk,
-        notNull: hasNotNull || hasPk,
-        unique: hasUnique,
-        ...(defaultVal !== undefined && { default: defaultVal }),
-      })
-    }
-
-    tables.push({ id: existing?.id ?? uuidv4(), name: tableName, position, columns })
   }
 
-  // Parse Refs
-  const refRe = /Ref:\s*(\w+)\.(\w+)\s*([-<>]+)\s*(\w+)\.(\w+)/g
-  while ((m = refRe.exec(stripped)) !== null) {
-    const [, srcName, srcColName, rel, tgtName, tgtColName] = m
-    const src = tables.find((t) => t.name === srcName)
-    const tgt = tables.find((t) => t.name === tgtName)
-    if (!src || !tgt) continue
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i].trim()
 
-    const srcCol = src.columns.find((c) => c.name === srcColName)
-    const tgtCol = tgt.columns.find((c) => c.name === tgtColName)
-    if (!srcCol || !tgtCol) continue
+    // Single-line table: Table foo { ... }
+    const inlineMatch = line.match(/^Table\s+(\w+)\s*\{([^}]*)\}/)
+    if (inlineMatch) {
+      const tableName = inlineMatch[1]
+      const existing = existingTables.find((t) => t.name === tableName)
+      const position = existing?.position ?? { x: 150 + Math.random() * 400, y: 150 + Math.random() * 300 }
+      const columns: Column[] = []
+      for (const l of inlineMatch[2].split('\n')) {
+        const col = parseColumn(l, existing)
+        if (col) columns.push(col)
+      }
+      tables.push({ id: existing?.id ?? uuidv4(), name: tableName, position, columns })
+      i++
+      continue
+    }
 
-    const relationType: RelationType =
-      rel === '-' ? 'one-to-one' : rel === '<>' ? 'many-to-many' : 'one-to-many'
+    // Multi-line table: Table foo {
+    // Only consume lines until a lone `}` — never bleeds into the next table.
+    const openMatch = line.match(/^Table\s+(\w+)\s*\{/)
+    if (openMatch) {
+      const tableName = openMatch[1]
+      const existing = existingTables.find((t) => t.name === tableName)
+      const position = existing?.position ?? { x: 150 + Math.random() * 400, y: 150 + Math.random() * 300 }
+      const columns: Column[] = []
+      i++
+      while (i < lines.length) {
+        const bodyLine = lines[i].trim()
+        if (bodyLine === '}') { i++; break }
+        if (/^Table\s+\w+/.test(bodyLine) || /^Ref:/.test(bodyLine)) break
+        const col = parseColumn(bodyLine, existing)
+        if (col) columns.push(col)
+        i++
+      }
+      tables.push({ id: existing?.id ?? uuidv4(), name: tableName, position, columns })
+      continue
+    }
 
-    edges.push({
-      id: uuidv4(),
-      source: src.id,
-      target: tgt.id,
-      data: { sourceColumnId: srcCol.id, targetColumnId: tgtCol.id, relationType },
-    })
+    // Ref
+    const refMatch = line.match(/^Ref:\s*(\w+)\.(\w+)\s*([-<>]+)\s*(\w+)\.(\w+)/)
+    if (refMatch) {
+      const [, srcName, srcColName, rel, tgtName, tgtColName] = refMatch
+      const src = tables.find((t) => t.name === srcName)
+      const tgt = tables.find((t) => t.name === tgtName)
+      if (src && tgt) {
+        const srcCol = src.columns.find((c) => c.name === srcColName)
+        const tgtCol = tgt.columns.find((c) => c.name === tgtColName)
+        if (srcCol && tgtCol) {
+          const relationType: RelationType =
+            rel === '-' ? 'one-to-one' : rel === '<>' ? 'many-to-many' : 'one-to-many'
+          edges.push({
+            id: uuidv4(),
+            source: src.id,
+            target: tgt.id,
+            data: { sourceColumnId: srcCol.id, targetColumnId: tgtCol.id, relationType },
+          })
+        }
+      }
+    }
+
+    i++
   }
 
   return { tables, edges }

@@ -48,6 +48,7 @@ export function RoomEditor({ roomId }: { roomId: string }) {
   }, [])
   const cursorTimeouts = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const screenToFlowRef = useRef<((pos: { x: number; y: number }) => { x: number; y: number }) | null>(null)
+  const focusTableRef = useRef<((tableId: string) => void) | null>(null)
   const sentEids = useRef(new Set<string>())
   const dbmlEditBaseRef = useRef<ERDState | null>(null)
 
@@ -247,9 +248,9 @@ export function RoomEditor({ roomId }: { roomId: string }) {
     const BASE_H = 99
     // Each ColumnRow: py-1 (4+4) + h-6 TypeSelect (24px, always in DOM) = 32px
     // Empty table shows "No columns" py-2 text-xs = 32px — treat as 1 virtual row
-    const COL_H = 32
+    const COL_H = 28
     const GAP_Y = 24
-    const COL_W = 340
+    const COL_W = 440
     const START_X = 60
     const START_Y = 60
 
@@ -309,11 +310,13 @@ export function RoomEditor({ roomId }: { roomId: string }) {
           userColor={userColor}
           historyCount={history.length}
           showHistory={showHistory}
+          tables={store.tables.map((t) => ({ id: t.id, name: t.name }))}
           onAddTable={() => setShowAddTable(true)}
           onClearAll={handleClearAll}
           onTidy={handleTidy}
           onRenameUser={handleRenameUser}
           onToggleHistory={() => setShowHistory((v) => !v)}
+          onFocusTable={(id) => focusTableRef.current?.(id)}
         />
         <div className="flex flex-1 overflow-hidden relative">
           <SQLPanel
@@ -330,6 +333,7 @@ export function RoomEditor({ roomId }: { roomId: string }) {
             remoteVersion={remoteVersion}
             remoteCursors={canvasCursors}
             screenToFlowRef={screenToFlowRef}
+            focusTableRef={focusTableRef}
             onNodeDragStop={handleNodeDragStop}
             onConnect={handleConnect}
             onEdgeDelete={store.deleteEdge}
@@ -351,9 +355,9 @@ export function RoomEditor({ roomId }: { roomId: string }) {
       )}
       {pendingConn && sourceTable && targetTable && (
         <EdgeModal
-          sourceTable={sourceTable}
-          targetTable={targetTable}
-          onConfirm={handleEdgeConfirm}
+          sourceTable={targetTable}
+          targetTable={sourceTable}
+          onConfirm={(srcColId, tgtColId, rel) => handleEdgeConfirm(tgtColId, srcColId, rel)}
           onCancel={() => setPendingConn(null)}
         />
       )}

@@ -1,8 +1,46 @@
 const { createServer } = require('http')
 const { parse } = require('url')
 const { randomUUID } = require('crypto')
+const fs = require('fs')
+const path = require('path')
 const next = require('next')
 const { Server } = require('socket.io')
+
+const ROOMS_DIR = path.join(__dirname, 'data', 'rooms')
+fs.mkdirSync(ROOMS_DIR, { recursive: true })
+
+const pendingSaves = new Map()
+
+function roomFile(roomId) {
+  return path.join(ROOMS_DIR, `${roomId}.json`)
+}
+
+function loadRoom(roomId) {
+  try {
+    const raw = fs.readFileSync(roomFile(roomId), 'utf8')
+    const data = JSON.parse(raw)
+    return {
+      state: { tables: data.tables ?? [], edges: data.edges ?? [] },
+      history: data.history ?? [],
+    }
+  } catch {
+    return null
+  }
+}
+
+function scheduleRoomSave(roomId, rooms, roomHistory) {
+  if (pendingSaves.has(roomId)) clearTimeout(pendingSaves.get(roomId))
+  pendingSaves.set(roomId, setTimeout(() => {
+    pendingSaves.delete(roomId)
+    const state = rooms.get(roomId)
+    const history = roomHistory.get(roomId) || []
+    if (!state) return
+    const data = JSON.stringify({ tables: state.tables, edges: state.edges, history })
+    fs.writeFile(roomFile(roomId), data, (err) => {
+      if (err) console.error(`[persist] failed to save room ${roomId}:`, err)
+    })
+  }, 500))
+}
 
 const dev = process.env.NODE_ENV !== 'production'
 const hostname = '0.0.0.0'
@@ -156,9 +194,12 @@ app.prepare().then(() => {
       currentRoom = roomId
       socket.join(roomId)
 
-      if (!rooms.has(roomId)) rooms.set(roomId, { tables: [], edges: [] })
+      if (!rooms.has(roomId)) {
+        const saved = loadRoom(roomId)
+        rooms.set(roomId, saved ? saved.state : { tables: [], edges: [] })
+        roomHistory.set(roomId, saved ? saved.history : [])
+      }
       if (!roomUsers.has(roomId)) roomUsers.set(roomId, new Set())
-      if (!roomHistory.has(roomId)) roomHistory.set(roomId, [])
 
       roomUsers.get(roomId).add(socket.id)
 
@@ -189,6 +230,7 @@ app.prepare().then(() => {
       }
 
       rooms.set(currentRoom, applyOp(state, cleanOp))
+      scheduleRoomSave(currentRoom, rooms, roomHistory)
 
       const payload = entry
         ? { ...cleanOp, _eid: eid, _historyEntry: clientHistory([entry])[0] }
@@ -209,6 +251,7 @@ app.prepare().then(() => {
       const truncated = history.slice(0, idx + 1)
       roomHistory.set(currentRoom, truncated)
       rooms.set(currentRoom, state)
+      scheduleRoomSave(currentRoom, rooms, roomHistory)
 
       io.to(currentRoom).emit('room-state', {
         ...state,
