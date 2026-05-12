@@ -71,7 +71,7 @@ function RelationEdge({
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                ;(data as Record<string, unknown>).onDelete?.()
+                ;(data as Record<string, () => void>).onDelete?.()
               }}
               style={{
                 background: '#ef444422',
