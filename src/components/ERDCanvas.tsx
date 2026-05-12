@@ -365,7 +365,7 @@ function CanvasInner({
   )
 
   return (
-    <div className="flex-1 relative">
+    <div className="flex-1 relative" style={{ userSelect: 'none' }}>
       <ReactFlow
         nodes={nodes}
         edges={rfEdges}

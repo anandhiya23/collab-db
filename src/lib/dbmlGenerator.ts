@@ -160,7 +160,7 @@ function parseDBMLType(
   return { type: 'TEXT' }
 }
 
-export function parseDBML(code: string, existingTables: ERDTable[]): ERDState {
+export function parseDBML(code: string, existingTables: ERDTable[], viewportCenter?: { x: number; y: number }): ERDState {
   const tables: ERDTable[] = []
   const edges: ERDEdge[] = []
 
@@ -203,7 +203,9 @@ export function parseDBML(code: string, existingTables: ERDTable[]): ERDState {
     if (inlineMatch) {
       const tableName = inlineMatch[1]
       const existing = existingTables.find((t) => t.name === tableName)
-      const position = existing?.position ?? { x: 150 + Math.random() * 400, y: 150 + Math.random() * 300 }
+      const cx = viewportCenter?.x ?? 300
+      const cy = viewportCenter?.y ?? 300
+      const position = existing?.position ?? { x: cx + (Math.random() - 0.5) * 200, y: cy + (Math.random() - 0.5) * 200 }
       const columns: Column[] = []
       for (const l of inlineMatch[2].split('\n')) {
         const col = parseColumn(l, existing)
@@ -220,7 +222,9 @@ export function parseDBML(code: string, existingTables: ERDTable[]): ERDState {
     if (openMatch) {
       const tableName = openMatch[1]
       const existing = existingTables.find((t) => t.name === tableName)
-      const position = existing?.position ?? { x: 150 + Math.random() * 400, y: 150 + Math.random() * 300 }
+      const cx = viewportCenter?.x ?? 300
+      const cy = viewportCenter?.y ?? 300
+      const position = existing?.position ?? { x: cx + (Math.random() - 0.5) * 200, y: cy + (Math.random() - 0.5) * 200 }
       const columns: Column[] = []
       i++
       while (i < lines.length) {

@@ -275,7 +275,8 @@ export function RoomEditor({ roomId }: { roomId: string }) {
     // Use snapshot from edit-start so remote additions (e.g. B's new columns)
     // never appear in prev — preventing spurious delete ops against them.
     const prev = dbmlEditBaseRef.current ?? { tables: current.tables, edges: current.edges }
-    const next = parseDBML(rawDBML, prev.tables)
+    const viewportCenter = screenToFlowRef.current?.({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+    const next = parseDBML(rawDBML, prev.tables, viewportCenter)
     const ops = diffERDState(prev, next)
     // Advance base to reflect A's committed intent; keeps future diffs incremental.
     dbmlEditBaseRef.current = { tables: next.tables, edges: next.edges }
