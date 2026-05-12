@@ -46,15 +46,9 @@ export function SQLPanel({ sql, dbml, remoteDBMLCursors, onDBMLChange, onDBMLCur
   const [localDBML, setLocalDBML] = useState(dbml)
   const [isEditingDBML, setIsEditingDBML] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const wasEditingRef = useRef(false)
 
   useEffect(() => {
-    const wasEditing = wasEditingRef.current
-    wasEditingRef.current = isEditingDBML
-    // Only overwrite user's textarea when dbml changes while already not editing
-    // (remote change). Transitioning from editing→not-editing (blur) must NOT
-    // overwrite because generateDBML reorders tables vs what the user typed.
-    if (!isEditingDBML && !wasEditing) {
+    if (!isEditingDBML) {
       setLocalDBML((prev) => reorderDBML(dbml, prev))
     }
   }, [dbml, isEditingDBML])

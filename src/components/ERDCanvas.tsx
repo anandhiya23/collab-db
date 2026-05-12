@@ -50,7 +50,7 @@ function RelationEdge({
             transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`,
             pointerEvents: 'all',
             display: 'flex',
-            alignItems: 'center',
+            alignItems: 'stretch',
             gap: 4,
           }}
         >
@@ -74,15 +74,16 @@ function RelationEdge({
                 ;(data as Record<string, () => void>).onDelete?.()
               }}
               style={{
-                background: '#ef444422',
-                border: '1px solid #ef444466',
+                background: '#2a1a1a',
+                border: '1px solid #ef444488',
                 borderRadius: 3,
                 color: '#ef4444',
                 fontSize: 13,
-                lineHeight: '16px',
                 cursor: 'pointer',
                 padding: '0 5px',
                 fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
               }}
             >
               ×
