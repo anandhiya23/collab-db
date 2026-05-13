@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useCallback, useEffect, useReducer, useRef } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -27,20 +27,33 @@ import { TableNode } from './TableNode'
 import { ERDTable, ERDEdge } from '@/types/erd'
 import { RemoteCanvasCursor } from '@/types/presence'
 
+export const SelectedTablesContext = createContext<ReadonlySet<string>>(new Set())
+export const ConnectedTablesContext = createContext<ReadonlySet<string>>(new Set())
+
 function RelationEdge({
-  selected, sourceX, sourceY, targetX, targetY,
+  source, target, selected, sourceX, sourceY, targetX, targetY,
   sourcePosition, targetPosition, data, markerEnd,
 }: EdgeProps) {
+  const selectedTables = useContext(SelectedTablesContext)
+  const isActive = selectedTables.has(source) || selectedTables.has(target)
+  const anySelected = selectedTables.size > 0
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition,
   })
-  const stroke = selected ? '#818cf8' : '#6366f1'
+  const muted = anySelected && !isActive && !selected
+  const stroke = isActive || selected ? '#818cf8' : '#6366f1'
   return (
     <>
       <BaseEdge
         path={edgePath}
         markerEnd={markerEnd}
-        style={{ stroke, strokeWidth: selected ? 2.5 : 2 }}
+        style={{
+          stroke,
+          strokeWidth: isActive || selected ? 2.5 : 2,
+          strokeOpacity: muted ? 0.12 : 1,
+          strokeDasharray: isActive ? '8 4' : undefined,
+          animation: isActive ? 'dashSlide 0.5s linear infinite' : undefined,
+        }}
       />
       <EdgeLabelRenderer>
         <div
@@ -52,12 +65,13 @@ function RelationEdge({
             display: 'flex',
             alignItems: 'stretch',
             gap: 4,
+            zIndex: isActive ? 10 : undefined,
           }}
         >
           <span
             style={{
               background: '#1a1d27',
-              color: selected ? '#a5b4fc' : '#7c86a2',
+              color: isActive || selected ? '#a5b4fc' : muted ? '#2a2d3a' : '#7c86a2',
               fontSize: 10,
               fontFamily: 'monospace',
               padding: '2px 6px',
@@ -251,6 +265,18 @@ function CanvasInner({
   onCursorMove,
   onSelectionChange,
 }: ERDCanvasProps) {
+  const [selectedNodeIds, setSelectedNodeIds] = useState<ReadonlySet<string>>(new Set())
+
+  const connectedTableIds = useMemo(() => {
+    if (selectedNodeIds.size === 0) return new Set<string>()
+    const out = new Set<string>()
+    for (const e of edges) {
+      if (selectedNodeIds.has(e.source)) out.add(e.target)
+      if (selectedNodeIds.has(e.target)) out.add(e.source)
+    }
+    return out
+  }, [selectedNodeIds, edges])
+
   const [nodes, setNodes] = useNodesState(tables.map(makeNode))
   const onEdgeDeleteRef = useRef(onEdgeDelete)
   onEdgeDeleteRef.current = onEdgeDelete
@@ -308,6 +334,14 @@ function CanvasInner({
   useEffect(() => {
     setRfEdges(edges.map((e) => erdEdgeToRFEdge(e, tables, (id) => onEdgeDeleteRef.current(id))))
   }, [edgeKey, tables]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setRfEdges((prev) => prev.map((e) => {
+      const active = selectedNodeIds.has(e.source!) || selectedNodeIds.has(e.target!)
+      const already = (e.zIndex ?? 0) > 0
+      return active === already ? e : { ...e, zIndex: active ? 10 : 0 }
+    }))
+  }, [selectedNodeIds]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -368,6 +402,7 @@ function CanvasInner({
 
   const handleSelectionChange = useCallback(
     ({ nodes }: { nodes: Node[] }) => {
+      setSelectedNodeIds(new Set(nodes.map((n) => n.id)))
       onSelectionChange?.(nodes.map((n) => n.id))
     },
     [onSelectionChange]
@@ -375,6 +410,8 @@ function CanvasInner({
 
   return (
     <div className="flex-1 relative" style={{ userSelect: 'none' }}>
+      <SelectedTablesContext.Provider value={selectedNodeIds}>
+      <ConnectedTablesContext.Provider value={connectedTableIds}>
       <ReactFlow
         nodes={nodes}
         edges={rfEdges}
@@ -413,6 +450,8 @@ function CanvasInner({
           zoomable
         />
       </ReactFlow>
+      </ConnectedTablesContext.Provider>
+      </SelectedTablesContext.Provider>
       <CursorLayer cursors={remoteCursors} />
     </div>
   )

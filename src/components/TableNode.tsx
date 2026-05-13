@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useContext, useRef, useEffect } from 'react'
 import { Handle, Position, NodeProps, useReactFlow } from '@xyflow/react'
 import { Trash2, Plus, Key } from 'lucide-react'
 import { useERDStore } from '@/lib/store'
 import { ERDTable, Column, PG_TYPES, PGType } from '@/types/erd'
+import { ConnectedTablesContext } from './ERDCanvas'
 
 function TypeBadge({
   value,
@@ -261,6 +262,8 @@ function ColumnRow({
 export function TableNode({ id, selected }: NodeProps) {
   const table = useERDStore((s) => s.tables.find((t) => t.id === id))
   const { deleteTable, addColumn, updateTableName } = useERDStore()
+  const connectedTables = useContext(ConnectedTablesContext)
+  const isConnected = !selected && connectedTables.has(id)
   const [editingColId, setEditingColId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState(false)
   const [nameVal, setNameVal] = useState(table?.name ?? '')
@@ -289,11 +292,17 @@ export function TableNode({ id, selected }: NodeProps) {
     <div
       style={{
         background: 'var(--surface)',
-        border: `2px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
+        border: `2px solid ${
+          selected ? 'var(--accent)' :
+          isConnected ? 'rgba(99,102,241,0.5)' :
+          'var(--border)'
+        }`,
         borderRadius: 8,
         minWidth: 220,
         boxShadow: selected
           ? '0 0 0 1px var(--accent), 0 4px 24px rgba(99,102,241,0.2)'
+          : isConnected
+          ? '0 0 0 1px rgba(99,102,241,0.25), 0 2px 16px rgba(99,102,241,0.15)'
           : '0 2px 12px rgba(0,0,0,0.4)',
         transition: 'border-color 0.15s, box-shadow 0.15s',
       }}
