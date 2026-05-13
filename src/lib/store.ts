@@ -21,6 +21,8 @@ interface ERDStore {
   updateColumn: (tableId: string, columnId: string, updates: Partial<Column>) => void
   deleteColumn: (tableId: string, columnId: string) => void
 
+  duplicateTable: (table: ERDTable, offset?: { x: number; y: number }) => void
+
   addEdge: (edge: ERDEdge) => void
   deleteEdge: (id: string) => void
 
@@ -68,6 +70,17 @@ export const useERDStore = create<ERDStore>()(
             return {
               tables: state.tables.map((t) =>
                 t.id !== op.tableId ? t : { ...t, columns: t.columns.filter((c) => c.id !== op.columnId) }
+              ),
+            }
+          case 'reorder-columns':
+            return {
+              tables: state.tables.map((t) =>
+                t.id !== op.tableId ? t : {
+                  ...t,
+                  columns: op.columnIds
+                    .map((id) => t.columns.find((c) => c.id === id))
+                    .filter((c): c is Column => c !== undefined),
+                }
               ),
             }
           case 'add-edge':
@@ -150,6 +163,17 @@ export const useERDStore = create<ERDStore>()(
         ),
       }))
       get()._opListener?.({ type: 'delete-column', tableId, columnId })
+    },
+
+    duplicateTable: (table, offset = { x: 40, y: 40 }) => {
+      const newTable: ERDTable = {
+        id: uuidv4(),
+        name: `${table.name}_copy`,
+        position: { x: table.position.x + offset.x, y: table.position.y + offset.y },
+        columns: table.columns.map((c) => ({ ...c, id: uuidv4() })),
+      }
+      set((state) => ({ tables: [...state.tables, newTable] }))
+      get()._opListener?.({ type: 'add-table', table: newTable })
     },
 
     addEdge: (edge) => {

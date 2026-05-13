@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { Copy, Check, Database } from 'lucide-react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { Copy, Check, Database, X, ChevronUp, ChevronDown } from 'lucide-react'
 import { tokenizeSQL } from '@/lib/sqlGenerator'
 import { tokenizeDBML } from '@/lib/dbmlGenerator'
 import { RemoteDBMLCursor } from '@/types/presence'
@@ -46,6 +46,78 @@ export function SQLPanel({ sql, dbml, remoteDBMLCursors, onDBMLChange, onDBMLCur
   const [localDBML, setLocalDBML] = useState(dbml)
   const [isEditingDBML, setIsEditingDBML] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const [showFR, setShowFR] = useState(false)
+  const [findText, setFindText] = useState('')
+  const [replaceText, setReplaceText] = useState('')
+  const [matchIndex, setMatchIndex] = useState(0)
+  const findInputRef = useRef<HTMLInputElement>(null)
+
+  const matches = useMemo(() => {
+    if (!findText) return []
+    const out: { start: number; end: number }[] = []
+    let i = 0
+    while (i <= localDBML.length - findText.length) {
+      const idx = localDBML.indexOf(findText, i)
+      if (idx === -1) break
+      out.push({ start: idx, end: idx + findText.length })
+      i = idx + 1
+    }
+    return out
+  }, [localDBML, findText])
+
+  const clampedIdx = matches.length > 0 ? matchIndex % matches.length : 0
+
+  const scrollToMatch = useCallback((idx: number, allMatches: typeof matches) => {
+    const ta = textareaRef.current
+    if (!ta || allMatches.length === 0) return
+    const m = allMatches[idx % allMatches.length]
+    ta.focus()
+    ta.setSelectionRange(m.start, m.end)
+    const linesBefore = localDBML.slice(0, m.start).split('\n').length - 1
+    ta.scrollTop = Math.max(0, linesBefore * 20 - ta.clientHeight / 2)
+  }, [localDBML])
+
+  const openFR = useCallback(() => {
+    setShowFR(true)
+    setTimeout(() => findInputRef.current?.select(), 0)
+  }, [])
+
+  const closeFR = useCallback(() => {
+    setShowFR(false)
+    textareaRef.current?.focus()
+  }, [])
+
+  const goNext = useCallback(() => {
+    const next = matches.length > 0 ? (clampedIdx + 1) % matches.length : 0
+    setMatchIndex(next)
+    scrollToMatch(next, matches)
+  }, [matches, clampedIdx, scrollToMatch])
+
+  const goPrev = useCallback(() => {
+    const prev = matches.length > 0 ? (clampedIdx - 1 + matches.length) % matches.length : 0
+    setMatchIndex(prev)
+    scrollToMatch(prev, matches)
+  }, [matches, clampedIdx, scrollToMatch])
+
+  const replaceCurrent = useCallback(() => {
+    if (matches.length === 0) return
+    const m = matches[clampedIdx]
+    const next = localDBML.slice(0, m.start) + replaceText + localDBML.slice(m.end)
+    setLocalDBML(next)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => onDBMLChange?.(next), 300)
+  }, [matches, clampedIdx, localDBML, replaceText, onDBMLChange])
+
+  const replaceAll = useCallback(() => {
+    if (!findText) return
+    const next = localDBML.split(findText).join(replaceText)
+    setLocalDBML(next)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => onDBMLChange?.(next), 300)
+    setMatchIndex(0)
+  }, [findText, replaceText, localDBML, onDBMLChange])
 
   useEffect(() => {
     if (!isEditingDBML) {
@@ -167,6 +239,162 @@ export function SQLPanel({ sql, dbml, remoteDBMLCursors, onDBMLChange, onDBMLCur
         </div>
       )}
 
+      {/* Find & Replace bar — DBML tab only */}
+      {tab === 'dbml' && showFR && (
+        <div
+          style={{
+            borderBottom: '1px solid var(--border)',
+            background: 'var(--surface-2)',
+            padding: '8px 10px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+          }}
+        >
+          {/* Find row */}
+          <div className="flex items-center gap-1.5">
+            <input
+              ref={findInputRef}
+              placeholder="Find"
+              value={findText}
+              onChange={(e) => { setFindText(e.target.value); setMatchIndex(0) }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.shiftKey ? goPrev() : goNext() }
+                if (e.key === 'Escape') closeFR()
+              }}
+              spellCheck={false}
+              style={{
+                flex: 1,
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                color: 'var(--text)',
+                fontSize: 12,
+                padding: '3px 8px',
+                outline: 'none',
+                fontFamily: 'var(--font-mono, monospace)',
+              }}
+            />
+            <span
+              style={{
+                fontSize: 11,
+                color: 'var(--text-muted)',
+                whiteSpace: 'nowrap',
+                minWidth: 40,
+                textAlign: 'center',
+              }}
+            >
+              {findText ? (matches.length === 0 ? '0 / 0' : `${clampedIdx + 1} / ${matches.length}`) : ''}
+            </span>
+            <button
+              onClick={goPrev}
+              disabled={matches.length === 0}
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                color: matches.length > 0 ? 'var(--text-muted)' : 'var(--border)',
+                cursor: matches.length > 0 ? 'pointer' : 'default',
+                padding: '2px 4px',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+              title="Previous match (Shift+Enter)"
+            >
+              <ChevronUp size={13} />
+            </button>
+            <button
+              onClick={goNext}
+              disabled={matches.length === 0}
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                color: matches.length > 0 ? 'var(--text-muted)' : 'var(--border)',
+                cursor: matches.length > 0 ? 'pointer' : 'default',
+                padding: '2px 4px',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+              title="Next match (Enter)"
+            >
+              <ChevronDown size={13} />
+            </button>
+            <button
+              onClick={closeFR}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: '2px 4px',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+              title="Close (Esc)"
+            >
+              <X size={13} />
+            </button>
+          </div>
+          {/* Replace row */}
+          <div className="flex items-center gap-1.5">
+            <input
+              placeholder="Replace"
+              value={replaceText}
+              onChange={(e) => setReplaceText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') replaceCurrent()
+                if (e.key === 'Escape') closeFR()
+              }}
+              spellCheck={false}
+              style={{
+                flex: 1,
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                color: 'var(--text)',
+                fontSize: 12,
+                padding: '3px 8px',
+                outline: 'none',
+                fontFamily: 'var(--font-mono, monospace)',
+              }}
+            />
+            <button
+              onClick={replaceCurrent}
+              disabled={matches.length === 0}
+              style={{
+                background: matches.length > 0 ? 'var(--surface)' : 'transparent',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                color: matches.length > 0 ? 'var(--text)' : 'var(--text-muted)',
+                cursor: matches.length > 0 ? 'pointer' : 'default',
+                fontSize: 11,
+                padding: '3px 8px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Replace
+            </button>
+            <button
+              onClick={replaceAll}
+              disabled={matches.length === 0}
+              style={{
+                background: matches.length > 0 ? 'var(--surface)' : 'transparent',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                color: matches.length > 0 ? 'var(--text)' : 'var(--text-muted)',
+                cursor: matches.length > 0 ? 'pointer' : 'default',
+                fontSize: 11,
+                padding: '3px 8px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              All
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Code content */}
       <div
         className="flex-1 overflow-auto"
@@ -174,10 +402,16 @@ export function SQLPanel({ sql, dbml, remoteDBMLCursors, onDBMLChange, onDBMLCur
       >
         {tab === 'dbml' ? (
           <textarea
+            ref={textareaRef}
             spellCheck={false}
             value={localDBML}
             onChange={(e) => handleDBMLInput(e.target.value)}
             onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === 'h') {
+                e.preventDefault()
+                openFR()
+                return
+              }
               if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
                 e.preventDefault()
                 return

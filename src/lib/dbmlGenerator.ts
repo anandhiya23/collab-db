@@ -8,8 +8,10 @@ function dbmlType(col: Column): string {
     case 'DECIMAL':
       return `decimal(${col.precision ?? 10}, ${col.scale ?? 2})`
     case 'SERIAL':
+    case 'INTEGER':
       return 'int'
     case 'BIGSERIAL':
+    case 'BIGINT':
       return 'bigint'
     default:
       return col.type.toLowerCase()
@@ -160,24 +162,78 @@ function parseDBMLType(
   return { type: 'TEXT' }
 }
 
+interface PendingRef {
+  fromTableName: string
+  fromColName: string
+  op: string
+  toTableName: string
+  toColName: string
+}
+
+function resolveRef(
+  fromTableName: string, fromColName: string,
+  op: string,
+  toTableName: string, toColName: string,
+  tables: ERDTable[],
+): ERDEdge | null {
+  const fromTable = tables.find((t) => t.name === fromTableName)
+  const toTable = tables.find((t) => t.name === toTableName)
+  if (!fromTable || !toTable) return null
+  const fromCol = fromTable.columns.find((c) => c.name === fromColName)
+  const toCol = toTable.columns.find((c) => c.name === toColName)
+  if (!fromCol || !toCol) return null
+
+  const relationType: RelationType =
+    op === '-' ? 'one-to-one' : op === '<>' ? 'many-to-many' : 'one-to-many'
+
+  // Convention: edge.source = "one" side (PK/parent), edge.target = "many" side (FK/child)
+  // `A.col < B.col` → A is one side (source), B is many/FK side (target) — no swap
+  // `A.col > B.col` → A is FK/many side (target), B is one side (source) — swap
+  const swap = op === '>'
+  return {
+    id: uuidv4(),
+    source: swap ? toTable.id : fromTable.id,
+    target: swap ? fromTable.id : toTable.id,
+    data: {
+      sourceColumnId: swap ? toCol.id : fromCol.id,
+      targetColumnId: swap ? fromCol.id : toCol.id,
+      relationType,
+    },
+  }
+}
+
 export function parseDBML(code: string, existingTables: ERDTable[], viewportCenter?: { x: number; y: number }): ERDState {
   const tables: ERDTable[] = []
   const edges: ERDEdge[] = []
+  const pendingRefs: PendingRef[] = []
 
   const stripped = code.replace(/\/\/.*$/gm, '')
   const lines = stripped.split('\n')
 
-  function parseColumn(raw: string, existing: ERDTable | undefined): Column | null {
+  function parseColumn(raw: string, tableName: string, existing: ERDTable | undefined): Column | null {
     const colMatch = raw.trim().match(/^(\w+)\s+([^\[]+?)\s*(?:\[([^\]]*)\])?$/)
     if (!colMatch) return null
     const [, name, rawType, settingsStr = ''] = colMatch
+
+    // Split settings carefully — ref values can contain dots and symbols but not commas
     const settings = settingsStr.split(',').map((s) => s.trim()).filter(Boolean)
+
     const hasPk = settings.some((s) => /^pk$/i.test(s) || /^primary key$/i.test(s))
     const hasIncrement = settings.some((s) => /^increment$/i.test(s))
     const hasUnique = settings.some((s) => /^unique$/i.test(s))
     const hasNotNull = settings.some((s) => /^not null$/i.test(s))
     const defaultSetting = settings.find((s) => /^default:/i.test(s))
     const defaultVal = defaultSetting ? defaultSetting.replace(/^default:\s*/i, '').trim() : undefined
+
+    // Inline ref: `ref: > table.col` or `ref: - table.col` etc.
+    const refSetting = settings.find((s) => /^ref:/i.test(s))
+    if (refSetting) {
+      const m = refSetting.match(/^ref:\s*(<>|[-<>])\s*(\w+)\.(\w+)/i)
+      if (m) {
+        pendingRefs.push({ fromTableName: tableName, fromColName: name, op: m[1], toTableName: m[2], toColName: m[3] })
+      }
+    }
+
     const { type, length, precision, scale } = parseDBMLType(rawType, hasIncrement)
     const existingCol = existing?.columns.find((c) => c.name === name)
     return {
@@ -208,7 +264,7 @@ export function parseDBML(code: string, existingTables: ERDTable[], viewportCent
       const position = existing?.position ?? { x: cx + (Math.random() - 0.5) * 200, y: cy + (Math.random() - 0.5) * 200 }
       const columns: Column[] = []
       for (const l of inlineMatch[2].split('\n')) {
-        const col = parseColumn(l, existing)
+        const col = parseColumn(l, tableName, existing)
         if (col) columns.push(col)
       }
       tables.push({ id: existing?.id ?? uuidv4(), name: tableName, position, columns })
@@ -217,7 +273,6 @@ export function parseDBML(code: string, existingTables: ERDTable[], viewportCent
     }
 
     // Multi-line table: Table foo {
-    // Only consume lines until a lone `}` — never bleeds into the next table.
     const openMatch = line.match(/^Table\s+(\w+)\s*\{/)
     if (openMatch) {
       const tableName = openMatch[1]
@@ -231,7 +286,7 @@ export function parseDBML(code: string, existingTables: ERDTable[], viewportCent
         const bodyLine = lines[i].trim()
         if (bodyLine === '}') { i++; break }
         if (/^Table\s+\w+/.test(bodyLine) || /^Ref:/.test(bodyLine)) break
-        const col = parseColumn(bodyLine, existing)
+        const col = parseColumn(bodyLine, tableName, existing)
         if (col) columns.push(col)
         i++
       }
@@ -239,29 +294,21 @@ export function parseDBML(code: string, existingTables: ERDTable[], viewportCent
       continue
     }
 
-    // Ref
-    const refMatch = line.match(/^Ref:\s*(\w+)\.(\w+)\s*([-<>]+)\s*(\w+)\.(\w+)/)
+    // Explicit Ref block
+    const refMatch = line.match(/^Ref:\s*(\w+)\.(\w+)\s*(<>|[-<>])\s*(\w+)\.(\w+)/)
     if (refMatch) {
       const [, srcName, srcColName, rel, tgtName, tgtColName] = refMatch
-      const src = tables.find((t) => t.name === srcName)
-      const tgt = tables.find((t) => t.name === tgtName)
-      if (src && tgt) {
-        const srcCol = src.columns.find((c) => c.name === srcColName)
-        const tgtCol = tgt.columns.find((c) => c.name === tgtColName)
-        if (srcCol && tgtCol) {
-          const relationType: RelationType =
-            rel === '-' ? 'one-to-one' : rel === '<>' ? 'many-to-many' : 'one-to-many'
-          edges.push({
-            id: uuidv4(),
-            source: src.id,
-            target: tgt.id,
-            data: { sourceColumnId: srcCol.id, targetColumnId: tgtCol.id, relationType },
-          })
-        }
-      }
+      const edge = resolveRef(srcName, srcColName, rel, tgtName, tgtColName, tables)
+      if (edge) edges.push(edge)
     }
 
     i++
+  }
+
+  // Resolve inline refs collected during table parsing
+  for (const r of pendingRefs) {
+    const edge = resolveRef(r.fromTableName, r.fromColName, r.op, r.toTableName, r.toColName, tables)
+    if (edge) edges.push(edge)
   }
 
   return { tables, edges }

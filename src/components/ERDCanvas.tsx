@@ -9,7 +9,7 @@ import {
   BackgroundVariant,
   BaseEdge,
   EdgeLabelRenderer,
-  getSmoothStepPath,
+  getBezierPath,
   useNodesState,
   useEdgesState,
   useReactFlow,
@@ -31,7 +31,7 @@ function RelationEdge({
   selected, sourceX, sourceY, targetX, targetY,
   sourcePosition, targetPosition, data, markerEnd,
 }: EdgeProps) {
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
+  const [edgePath, labelX, labelY] = getBezierPath({
     sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition,
   })
   const stroke = selected ? '#818cf8' : '#6366f1'
@@ -110,6 +110,7 @@ interface ERDCanvasProps {
   onEdgeDelete: (edgeId: string) => void
   onTableDelete: (tableId: string) => void
   onCursorMove: (x: number, y: number) => void
+  onSelectionChange?: (tableIds: string[]) => void
 }
 
 function makeNode(table: ERDTable): Node {
@@ -248,6 +249,7 @@ function CanvasInner({
   onEdgeDelete,
   onTableDelete,
   onCursorMove,
+  onSelectionChange,
 }: ERDCanvasProps) {
   const [nodes, setNodes] = useNodesState(tables.map(makeNode))
   const onEdgeDeleteRef = useRef(onEdgeDelete)
@@ -364,6 +366,13 @@ function CanvasInner({
     [rf, onCursorMove]
   )
 
+  const handleSelectionChange = useCallback(
+    ({ nodes }: { nodes: Node[] }) => {
+      onSelectionChange?.(nodes.map((n) => n.id))
+    },
+    [onSelectionChange]
+  )
+
   return (
     <div className="flex-1 relative" style={{ userSelect: 'none' }}>
       <ReactFlow
@@ -379,6 +388,7 @@ function CanvasInner({
         onSelectionDragStop={handleSelectionDragStop}
         onConnect={onConnect}
         onMouseMove={handleMouseMove}
+        onSelectionChange={handleSelectionChange}
         deleteKeyCode={null}
         fitView
         fitViewOptions={{ padding: 0.2 }}

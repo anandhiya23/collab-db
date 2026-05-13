@@ -59,6 +59,16 @@ export function diffERDState(prev: ERDState, next: ERDState): Op[] {
       const u = colUpdates(prevC, nextC)
       if (u) ops.push({ type: 'update-column', tableId: nextT.id, columnId: nextC.id, updates: u })
     }
+
+    // Detect reorder: natural post-op order is surviving-prev + new-appended
+    const naturalOrder = [
+      ...prevT.columns.filter((c) => nextColMap.has(c.id)).map((c) => c.id),
+      ...nextT.columns.filter((c) => !prevColMap.has(c.id)).map((c) => c.id),
+    ]
+    const desiredOrder = nextT.columns.map((c) => c.id)
+    if (naturalOrder.join(',') !== desiredOrder.join(',')) {
+      ops.push({ type: 'reorder-columns', tableId: nextT.id, columnIds: desiredOrder })
+    }
   }
 
   // Edges — DBML regenerates all refs, match by semantic key to avoid churn

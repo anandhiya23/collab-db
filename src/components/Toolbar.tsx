@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Plus, Copy, Check, Users, Trash2, GitBranch, LayoutGrid, Pencil, History, Search } from 'lucide-react'
+import { Plus, Copy, Check, Users, Trash2, GitBranch, LayoutGrid, Pencil, History, Search, Download } from 'lucide-react'
 
 interface ToolbarProps {
   roomId: string
@@ -17,9 +17,10 @@ interface ToolbarProps {
   onRenameUser: (name: string) => void
   onToggleHistory: () => void
   onFocusTable: (tableId: string) => void
+  onExportJSON: () => void
 }
 
-export function Toolbar({ roomId, userCount, userName, userColor, historyCount, showHistory, tables, onAddTable, onClearAll, onTidy, onRenameUser, onToggleHistory, onFocusTable }: ToolbarProps) {
+export function Toolbar({ roomId, userCount, userName, userColor, historyCount, showHistory, tables, onAddTable, onClearAll, onTidy, onRenameUser, onToggleHistory, onFocusTable, onExportJSON }: ToolbarProps) {
   const [copied, setCopied] = useState(false)
   const [editingName, setEditingName] = useState(false)
   const [nameVal, setNameVal] = useState(userName)
@@ -189,6 +190,29 @@ export function Toolbar({ roomId, userCount, userName, userColor, historyCount, 
             {historyCount}
           </span>
         )}
+      </button>
+
+      {/* Export JSON */}
+      <button
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-all"
+        style={{
+          background: 'transparent',
+          color: 'var(--text-muted)',
+          border: '1px solid var(--border)',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = 'var(--surface-2)'
+          e.currentTarget.style.color = 'var(--text)'
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'transparent'
+          e.currentTarget.style.color = 'var(--text-muted)'
+        }}
+        onClick={onExportJSON}
+        title="Export room as JSON"
+      >
+        <Download size={14} />
+        Export
       </button>
 
       {/* Search */}

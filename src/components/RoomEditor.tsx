@@ -34,6 +34,8 @@ export function RoomEditor({ roomId }: { roomId: string }) {
   const [dbmlCursors, setDbmlCursors] = useState<RemoteDBMLCursor[]>([])
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [showHistory, setShowHistory] = useState(false)
+  const [selectedTableIds, setSelectedTableIds] = useState<string[]>([])
+  const copiedTableRef = useRef<(typeof store.tables)[0] | null>(null)
 
   const socketRef = useRef<Socket | null>(null)
   const presenceRef = useRef(randomPresence())
@@ -264,6 +266,40 @@ export function RoomEditor({ roomId }: { roomId: string }) {
     setRemoteVersion((v) => v + 1)
   }, [store])
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+        if (selectedTableIds.length === 0) return
+        const table = useERDStore.getState().tables.find((t) => t.id === selectedTableIds[0])
+        if (table) copiedTableRef.current = table
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+        if (!copiedTableRef.current) return
+        store.duplicateTable(copiedTableRef.current)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [selectedTableIds, store])
+
+  const handleExportJSON = useCallback(() => {
+    const { tables, edges } = useERDStore.getState()
+    const data = JSON.stringify({ roomId, tables, edges }, null, 2)
+    const blob = new Blob([data], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `collab-erd-${roomId.slice(0, 8)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [roomId])
+
+  const handleSelectionChange = useCallback((tableIds: string[]) => {
+    setSelectedTableIds(tableIds)
+  }, [])
+
   const handleDBMLEditStart = useCallback(() => {
     const { tables, edges } = useERDStore.getState()
     dbmlEditBaseRef.current = { tables, edges }
@@ -317,6 +353,7 @@ export function RoomEditor({ roomId }: { roomId: string }) {
           onRenameUser={handleRenameUser}
           onToggleHistory={() => setShowHistory((v) => !v)}
           onFocusTable={(id) => focusTableRef.current?.(id)}
+          onExportJSON={handleExportJSON}
         />
         <div className="flex flex-1 overflow-hidden relative">
           <SQLPanel
@@ -339,6 +376,7 @@ export function RoomEditor({ roomId }: { roomId: string }) {
             onEdgeDelete={store.deleteEdge}
             onTableDelete={store.deleteTable}
             onCursorMove={handleCanvasCursorMove}
+            onSelectionChange={handleSelectionChange}
           />
           {showHistory && (
             <HistoryPanel
